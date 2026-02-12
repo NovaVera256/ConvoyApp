@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "edu.temple.convoy"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
@@ -63,6 +63,5 @@ dependencies {
     implementation("com.google.android.gms:play-services-maps:20.0.0")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.google.maps.android:maps-compose:8.1.0")
 
 }
