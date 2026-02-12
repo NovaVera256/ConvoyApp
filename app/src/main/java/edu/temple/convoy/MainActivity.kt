@@ -1,7 +1,6 @@
 package edu.temple.convoy
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -13,19 +12,20 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import com.google.android.gms.maps.model.CameraPosition
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.MapView
 import com.google.android.gms.maps.model.LatLng
-import com.google.maps.android.compose.*
+import com.google.android.gms.maps.model.Marker
+import com.google.android.gms.maps.model.MarkerOptions
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -47,7 +47,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @RequiresApi(Build.VERSION_CODES.O)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -122,7 +121,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    @SuppressLint("UnrememberedMutableState")
     @Composable
     private fun MainScreen() {
         val ctx = LocalContext.current
@@ -136,13 +134,71 @@ class MainActivity : ComponentActivity() {
         val convoyId = convoyIdState.value
         val latLng = currentLatLng.value
 
-        val cameraPositionState = rememberCameraPositionState {
-            position = CameraPosition.fromLatLngZoom(latLng, 15f)
-        }
+        Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
 
-        // Keep camera following latest location (simple)
-        LaunchedEffect(latLng) {
-            cameraPositionState.position = CameraPosition.fromLatLngZoom(latLng, 16f)
+            Text(text = if (convoyId == null) "Convoy ID: (none)" else "Convoy ID: $convoyId")
+
+            Spacer(Modifier.height(8.dp))
+
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                BasicMapView(latLng = latLng, modifier = Modifier.fillMaxSize())
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            Row(modifier = Modifier.fillMaxWidth()) {
+
+                Button(
+                    onClick = {
+                        val username = SessionStore.getUsername(ctx) ?: return@Button
+                        val sessionKey = SessionStore.getSessionKey(ctx) ?: return@Button
+
+                        scope.launch {
+                            try {
+                                val json = Api.createConvoy(username, sessionKey)
+                                if (json.optString("status") == "SUCCESS") {
+                                    convoyIdState.value = json.optString("convoy_id")
+                                    startLocationService()
+                                } else {
+                                    Toast.makeText(ctx, json.optString("message"), Toast.LENGTH_SHORT).show()
+                                }
+                            } catch (_: Exception) {
+                                Toast.makeText(ctx, "Network error", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Start") }
+
+                Spacer(Modifier.width(8.dp))
+
+                Button(
+                    onClick = { showJoinDialog = true },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Join") }
+
+                Spacer(Modifier.width(8.dp))
+
+                Button(
+                    onClick = { showLeaveConfirm = true },
+                    modifier = Modifier.weight(1f)
+                ) { Text("Leave") }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            Button(
+                onClick = { showEndConfirm = true },
+                enabled = convoyId != null,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("End Convoy") }
+
+            Spacer(Modifier.height(8.dp))
+
+            Button(
+                onClick = { logout() },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Logout") }
         }
 
         if (showEndConfirm) {
@@ -218,80 +274,46 @@ class MainActivity : ComponentActivity() {
                 text = { Text("Leave the convoy?") }
             )
         }
+    }
+}
 
-        Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+@Composable
+private fun BasicMapView(latLng: LatLng, modifier: Modifier = Modifier) {
+    val ctx = LocalContext.current
 
-            Text(text = if (convoyId == null) "Convoy ID: (none)" else "Convoy ID: $convoyId")
+    val mapView = remember { MapView(ctx).apply { onCreate(Bundle()) } }
+    var marker by remember { mutableStateOf<Marker?>(null) }
 
-            Spacer(Modifier.height(8.dp))
+    AndroidView(
+        factory = { mapView },
+        modifier = modifier
+    )
 
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                GoogleMap(
-                    modifier = Modifier.fillMaxSize(),
-                    cameraPositionState = cameraPositionState
-                ) {
-                    Marker(
-                        state = MarkerState(position = latLng),
-                        title = "You"
-                    )
-                }
+    LaunchedEffect(Unit) {
+        mapView.getMapAsync { map ->
+            map.uiSettings.isZoomControlsEnabled = true
+            marker = map.addMarker(MarkerOptions().position(latLng).title("You"))
+            map.moveCamera(CameraUpdateFactory.newLatLngZoom(latLng, 16f))
+        }
+    }
+
+    LaunchedEffect(latLng) {
+        mapView.getMapAsync { map ->
+            if (marker == null) {
+                marker = map.addMarker(MarkerOptions().position(latLng).title("You"))
+                map.moveCamera(CameraUpdateFactory.newLatLngZoom(latLng, 16f))
+            } else {
+                marker?.position = latLng
             }
+        }
+    }
 
-            Spacer(Modifier.height(8.dp))
-
-            Row(modifier = Modifier.fillMaxWidth()) {
-
-                Button(
-                    onClick = {
-                        val username = SessionStore.getUsername(ctx) ?: return@Button
-                        val sessionKey = SessionStore.getSessionKey(ctx) ?: return@Button
-
-                        scope.launch {
-                            try {
-                                val json = Api.createConvoy(username, sessionKey)
-                                if (json.optString("status") == "SUCCESS") {
-                                    convoyIdState.value = json.optString("convoy_id")
-                                    startLocationService()
-                                } else {
-                                    Toast.makeText(ctx, json.optString("message"), Toast.LENGTH_SHORT).show()
-                                }
-                            } catch (_: Exception) {
-                                Toast.makeText(ctx, "Network error", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Start") }
-
-                Spacer(Modifier.width(8.dp))
-
-                Button(
-                    onClick = { showJoinDialog = true },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Join") }
-
-                Spacer(Modifier.width(8.dp))
-
-                Button(
-                    onClick = { showLeaveConfirm = true },
-                    modifier = Modifier.weight(1f)
-                ) { Text("Leave") }
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            Button(
-                onClick = { showEndConfirm = true },
-                enabled = convoyId != null,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("End Convoy") }
-
-            Spacer(Modifier.height(8.dp))
-
-            Button(
-                onClick = { logout() },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Logout") }
+    DisposableEffect(Unit) {
+        mapView.onResume()
+        onDispose {
+            mapView.onPause()
+            mapView.onDestroy()
         }
     }
 }
+
